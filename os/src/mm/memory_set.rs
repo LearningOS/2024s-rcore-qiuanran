@@ -300,6 +300,25 @@ impl MemorySet {
             false
         }
     }
+
+    /// Pending if there had been used from start to end
+    pub fn free_in_range(&self, start:VirtPageNum, end:VirtPageNum) -> bool{
+        let res = self.areas
+        .iter()
+        .any(|area| area.vpn_range.in_range(start, end));
+        // println!("free____in ___ range{:?}",res);
+        res
+    }
+
+     /// unmap the virtual page number in the range
+     pub fn unmap_frame_area(&mut self, start: VirtPageNum, end:VirtPageNum) {
+        for page in start.0..end.0 {
+            self.page_table.unmap(VirtPageNum(page));
+        }
+        self.areas.retain(|area| {
+            !area.vpn_range.in_range(start,end)
+        });
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

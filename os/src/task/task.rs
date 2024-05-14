@@ -1,14 +1,15 @@
 //! Types related to task management & Functions for completely changing TCB
-use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use super::{current_task, TaskContext};
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
-
+use crate::timer::get_time_ms;
+use crate::mm::VirtPageNum;
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -68,6 +69,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Record the syscall times in a task
+    pub syscall_times:[u32; MAX_SYSCALL_NUM],
+
+    /// Record the time begin the task run
+    pub task_time: usize,
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +125,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    task_time: 0,
                 })
             },
         };
@@ -191,6 +200,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    task_time: 0,
                 })
             },
         });
@@ -249,4 +260,32 @@ pub enum TaskStatus {
     Running,
     /// exited
     Zombie,
+}
+
+/// return the current task's every syscall times
+pub fn get_syscall_time() -> [u32; MAX_SYSCALL_NUM] {
+    let task = current_task().unwrap();
+    let current_task = task.inner_exclusive_access();
+    let syscall_times = current_task.syscall_times;
+    drop(current_task);
+    drop(task);
+    syscall_times
+}
+
+/// return the current task's running time since it was first run 
+pub fn get_task_runtime() -> usize{
+    let task = current_task().unwrap();
+    let current_task = task.inner_exclusive_access();
+    let res = get_time_ms() - current_task.task_time;
+    drop(current_task);
+    drop(task);
+    res
+}
+
+/// check if all the page is free from the start page to end page
+pub fn free_in_page(start:VirtPageNum,end:VirtPageNum) -> bool{
+    let task = current_task().unwrap();
+    let res = task.inner.exclusive_access().memory_set.free_in_range(start, end);
+    drop(task);
+    res
 }
