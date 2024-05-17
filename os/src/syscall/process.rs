@@ -12,6 +12,8 @@ use crate::{
 };
 use crate::mm::translated_byte_buffer;
 use crate::task::{get_syscall_time, get_task_runtime,free_in_page};
+use crate::timer::get_time_us;
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct TimeVal {
@@ -119,11 +121,14 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    // The point is: this _ts is not the physical address used to be
+    // So must translate it from virtual to physical
+    let ts = translated_refmut(current_user_token(), _ts);
+    let usec = get_time_us();
+    (*ts).sec = usec / 1_000_000;
+    (*ts).usec = usec % 1_000_000;
+
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -159,7 +164,6 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     let start = VirtAddr::from(_start);
     let end:VirtAddr = VirtAddr::from(_start + _len).ceil().into();
 
-    // let current_task = get_current_tcb();
     // illeagal
     if !VirtAddr::from(_start).aligned() 
     || _port & !0b111 != 0 
@@ -177,6 +181,8 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
     if _port & 0b100 != 0 {
         permission |= MapPermission::X;
     }
+    
+    // Insert this area
     let current_task = current_task().unwrap();
     current_task.inner_exclusive_access().memory_set.insert_framed_area(start, end, permission);
     drop(current_task);
@@ -226,18 +232,37 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    // trace!(
+    //     "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+    //     current_task().unwrap().pid.0
+    // );
+    // trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(&path) {
+        let task = current_task().unwrap();
+        let spawn = task.spawn(data);
+        spawn.inner_exclusive_access().parent = Some(Arc::downgrade(&task));
+        task.inner_exclusive_access().children.push(spawn.clone());
+        let pid = spawn.pid.0;
+        add_task(spawn);
+        pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    // trace!(
+    //     "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+    //     current_task().unwrap().pid.0
+    // );
+    if _prio <= 1 {
+        return -1;
+    }
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    inner.priority = _prio as usize;
+    _prio
 }

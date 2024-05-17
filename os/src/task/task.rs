@@ -75,6 +75,12 @@ pub struct TaskControlBlockInner {
 
     /// Record the time begin the task run
     pub task_time: usize,
+
+    /// Priority of the task
+    pub priority: usize,
+
+    /// Stride of the task
+    pub stride: usize,
 }
 
 impl TaskControlBlockInner {
@@ -98,6 +104,7 @@ impl TaskControlBlock {
     /// Create a new process
     ///
     /// At present, it is only used for the creation of initproc
+    /// and the spwan
     pub fn new(elf_data: &[u8]) -> Self {
         // memory_set with elf program headers/trampoline/trap context/user stack
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
@@ -127,6 +134,8 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     task_time: 0,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         };
@@ -140,6 +149,13 @@ impl TaskControlBlock {
             trap_handler as usize,
         );
         task_control_block
+    }
+
+    /// Creat a new process and run a new elf
+    pub fn spawn (&self, elf_data: &[u8]) -> Arc<TaskControlBlock> {
+        let task = TaskControlBlock::new(elf_data);
+
+        Arc::new(task)
     }
 
     /// Load a new elf to replace the original application address space and start execution
@@ -170,6 +186,7 @@ impl TaskControlBlock {
         );
         // **** release inner automatically
     }
+
 
     /// parent process fork the child process
     pub fn fork(self: &Arc<Self>) -> Arc<Self> {
@@ -202,6 +219,8 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     task_time: 0,
+                    priority: 16,
+                    stride: 0
                 })
             },
         });
