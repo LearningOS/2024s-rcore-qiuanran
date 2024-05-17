@@ -1,8 +1,8 @@
 //! Types related to task management & Functions for completely changing TCB
-use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
 use crate::fs::{File, Stdin, Stdout};
+use super::{current_task, TaskContext};
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -10,7 +10,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
-
+use crate::timer::get_time_ms;
+use crate::mm::VirtPageNum;
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -71,6 +72,18 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Record the syscall times in a task
+    pub syscall_times:[u32; MAX_SYSCALL_NUM],
+
+    /// Record the time begin the task run
+    pub task_time: usize,
+
+    /// Priority of the task
+    pub priority: usize,
+
+    /// Stride of the task
+    pub stride: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +148,10 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    task_time: 0,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         };
@@ -216,6 +233,10 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    task_time: 0,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         });
@@ -261,6 +282,67 @@ impl TaskControlBlock {
             None
         }
     }
+
+    /// Creat a new process and run a new elf
+    pub fn spawn (&self, elf_data: &[u8]) -> Arc<TaskControlBlock> {
+        // let task = TaskControlBlock::new(elf_data);
+        // Arc::new(task)
+        // memory_set with elf program headers/trampoline/trap context/user stack
+        let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+        // alloc a pid and a kernel stack in kernel space
+        let pid_handle = pid_alloc();
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+        // copy fd table
+        let mut fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        let inner = self.inner_exclusive_access();
+        for fd in inner.fd_table.iter() {
+            if let Some(file) = fd {
+                fd_table.push(Some(file.clone()));
+            } else {
+                fd_table.push(None);
+            }
+        }
+        drop(inner);
+        // push a task context which goes to trap_return to the top of kernel stack
+        let task_control_block = Self {
+            pid: pid_handle,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: user_sp,
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                    task_status: TaskStatus::Ready,
+                    memory_set,
+                    parent: None,
+                    children: Vec::new(),
+                    exit_code: 0,
+                    fd_table: fd_table,
+                    heap_bottom: user_sp,
+                    program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    task_time: 0,
+                    priority: 16,
+                    stride: 0,
+                })
+            },
+        };
+        // prepare TrapContext in user space
+        let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
+        *trap_cx = TrapContext::app_init_context(
+            entry_point,
+            user_sp,
+            KERNEL_SPACE.exclusive_access().token(),
+            kernel_stack_top,
+            trap_handler as usize,
+        );
+        Arc::new(task_control_block)
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -274,4 +356,32 @@ pub enum TaskStatus {
     Running,
     /// exited
     Zombie,
+}
+
+/// return the current task's every syscall times
+pub fn get_syscall_time() -> [u32; MAX_SYSCALL_NUM] {
+    let task = current_task().unwrap();
+    let current_task = task.inner_exclusive_access();
+    let syscall_times = current_task.syscall_times;
+    drop(current_task);
+    drop(task);
+    syscall_times
+}
+
+/// return the current task's running time since it was first run 
+pub fn get_task_runtime() -> usize{
+    let task = current_task().unwrap();
+    let current_task = task.inner_exclusive_access();
+    let res = get_time_ms() - current_task.task_time;
+    drop(current_task);
+    drop(task);
+    res
+}
+
+/// check if all the page is free from the start page to end page
+pub fn free_in_page(start:VirtPageNum,end:VirtPageNum) -> bool{
+    let task = current_task().unwrap();
+    let res = task.inner.exclusive_access().memory_set.free_in_range(start, end);
+    drop(task);
+    res
 }

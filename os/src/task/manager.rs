@@ -1,9 +1,11 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
+use core::usize::MAX;
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::config::BIG_STRIDE;
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
     ready_queue: VecDeque<Arc<TaskControlBlock>>,
@@ -23,7 +25,36 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+
+        // Find the min stride in the ready queue use 
+        let (mut min_stride, mut idx) = (MAX, 0);
+
+        for (i,task) in self.ready_queue.iter().enumerate() {
+            let inner = task.inner_exclusive_access();
+            let stride = inner.stride;
+            let status = inner.task_status;
+            drop(inner);
+            if status != super::TaskStatus::Ready {
+                continue;
+            }
+            if stride < min_stride {
+                min_stride = stride;
+                idx = i;
+            }
+        } 
+
+        if min_stride == MAX {
+            return None;
+        }
+
+        let task = self.ready_queue.remove(idx).unwrap();
+        let mut inner = task.inner_exclusive_access();
+        inner.stride += BIG_STRIDE / inner.priority as usize;
+        drop(inner);
+        Some(task)
     }
 }
 

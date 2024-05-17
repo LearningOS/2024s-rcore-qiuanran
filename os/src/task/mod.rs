@@ -28,8 +28,7 @@ pub use context::TaskContext;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
-
+pub use task::{TaskControlBlock, TaskStatus,get_syscall_time, get_task_runtime,free_in_page};
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 pub use manager::add_task;
 pub use processor::{
