@@ -179,8 +179,10 @@ impl File for OSInode {
                 ino:get_inode_id(self.file_name()) as u64,
                 mode: if disk_inode.is_dir() {
                     StatMode::DIR
-                } else {
+                } else if disk_inode.is_file(){
                     StatMode::FILE
+                } else {
+                    StatMode::NULL
                 },
                 nlink: disk_inode.nlinks as u32, 
                 pad: [0; 7],

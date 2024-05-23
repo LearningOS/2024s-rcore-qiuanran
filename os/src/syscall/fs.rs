@@ -40,6 +40,8 @@ pub fn sys_read(fd: usize, buf: *const u8, len: usize) -> isize {
         drop(inner);
         trace!("kernel: sys_read .. file.read");
         file.read(UserBuffer::new(translated_byte_buffer(token, buf, len))) as isize
+        // println!("sys_read: {:?}",res);
+        // return res as isize;
     } else {
         -1
     }
@@ -90,17 +92,6 @@ pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
         st.ino = stat.ino;
         st.mode = stat.mode;
         st.nlink = stat.nlink;
-        // let ino = get_inode_id(file.file_name());
-        // let mode = get_file_mode(file.file_name());
-        // if ino == -1 || mode == StatMode::NULL {
-        //     return -1;
-        // }
-         
-
-        // st.dev = 0;
-        // st.ino = ino as u64;
-        // st.mode = mode;
-        // st.nlink = file.link_number() as u32;
         0
     } else {
         -1
