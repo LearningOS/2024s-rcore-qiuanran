@@ -9,7 +9,7 @@ use alloc::{
     vec::Vec,
 };
 use lazy_static::*;
-
+use alloc::vec;
 /// Allocator with a simple recycle strategy
 pub struct RecycleAllocator {
     current: usize,
@@ -134,6 +134,14 @@ pub struct TaskUserRes {
     pub ustack_base: usize,
     /// process belongs to
     pub process: Weak<ProcessControlBlock>,
+    /// Mutex resource for task now hold
+    pub mutex_have: Vec<i32>,
+    /// Mutex for task needed
+    pub mutex_need: Vec<i32>, 
+    /// Semaphore for task now hold
+    pub semaphore_have: Vec<i32>,
+    /// Semaphore for task needed
+    pub semaphore_need: Vec<i32>, 
 }
 /// Return the bottom addr (low addr) of the trap context for a task
 fn trap_cx_bottom_from_tid(tid: usize) -> usize {
@@ -152,10 +160,16 @@ impl TaskUserRes {
         alloc_user_res: bool,
     ) -> Self {
         let tid = process.inner_exclusive_access().alloc_tid();
+        let mutex_len = process.inner_exclusive_access().mutex_list.len() as usize;
+        let semaphore_len = process.inner_exclusive_access().semaphore_list.len() as usize;
         let task_user_res = Self {
             tid,
             ustack_base,
             process: Arc::downgrade(&process),
+            mutex_have: vec![0; mutex_len],
+            mutex_need: vec![0; mutex_len],
+            semaphore_have: vec![0; semaphore_len],
+            semaphore_need: vec![0; semaphore_len],
         };
         if alloc_user_res {
             task_user_res.alloc_user_res();
